@@ -1,4 +1,4 @@
-package net.digger.util;
+package net.digger.db;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -31,7 +31,7 @@ import java.sql.SQLException;
  * Provides table versioning and reduces boilerplate code.
  * @author walton
  */
-public class H2DB {
+public class H2Helper {
 	/**
 	 * Name of the table version table.
 	 */
@@ -71,7 +71,7 @@ public class H2DB {
 	 * @throws ClassNotFoundException
 	 * @throws SQLException
 	 */
-	public H2DB(Path datafile) throws IOException, ClassNotFoundException, SQLException {
+	public H2Helper(Path datafile) throws IOException, ClassNotFoundException, SQLException {
 		Class.forName("org.h2.Driver");
 		Files.createDirectories(datafile.getParent());
 		connUrl = "jdbc:h2:" + datafile.toString();
