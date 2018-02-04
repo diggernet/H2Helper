@@ -29,6 +29,7 @@ import java.sql.SQLException;
 /**
  * Utility class for H2 Database.
  * Provides table versioning and reduces boilerplate code.
+ * 
  * @author walton
  */
 public class H2Helper {
@@ -58,7 +59,8 @@ public class H2Helper {
 
 	/**
 	 * Callback used for processing query ResultSet.
-	 * @param <T>
+	 * 
+	 * @param <T> Type of data object to return.
 	 */
 	public interface ResultCallback<T> {
 		public T process(ResultSet rs) throws SQLException;
@@ -66,10 +68,11 @@ public class H2Helper {
 
 	/**
 	 * Create instance of H2DB using given database, and initialize table version table.
+	 * 
 	 * @param datafile Path to database.
-	 * @throws IOException
-	 * @throws ClassNotFoundException
-	 * @throws SQLException
+	 * @throws IOException If error creating database directory.
+	 * @throws ClassNotFoundException If error loading database driver.
+	 * @throws SQLException If database error occurs.
 	 */
 	public H2Helper(Path datafile) throws IOException, ClassNotFoundException, SQLException {
 		Class.forName("org.h2.Driver");
@@ -81,8 +84,9 @@ public class H2Helper {
 
 	/**
 	 * Opens and returns a connection to the database as user "sa".
-	 * @return
-	 * @throws SQLException
+	 * 
+	 * @return Database connection.
+	 * @throws SQLException If database error occurs.
 	 */
 	public Connection connect() throws SQLException {
 		return connect("sa", "");
@@ -90,8 +94,11 @@ public class H2Helper {
 
 	/**
 	 * Opens and returns a connection to the database as given user.
-	 * @return
-	 * @throws SQLException
+	 * 
+	 * @param user Username for connection.
+	 * @param password Password for connection.
+	 * @return Database connection.
+	 * @throws SQLException If database error occurs.
 	 */
 	public Connection connect(String user, String password) throws SQLException {
 		return DriverManager.getConnection(connUrl, user, password);
@@ -99,9 +106,10 @@ public class H2Helper {
 
 	/**
 	 * Returns the version of the given table, or null if not exists.
+	 * 
 	 * @param name Name of table to look up.
-	 * @return
-	 * @throws SQLException 
+	 * @return Version number of table.
+	 * @throws SQLException If database error occurs.
 	 */
 	private Integer getTableVersion(String name) throws SQLException {
 		Connection conn = null;
@@ -148,10 +156,11 @@ public class H2Helper {
 	/**
 	 * Updates or adds table version in db using the given connection.
 	 * Meant to be used inside a transaction.
+	 * 
 	 * @param conn Database connection to use.
 	 * @param name Name of table to update.
 	 * @param version Version number to set.
-	 * @throws SQLException 
+	 * @throws SQLException If database error occurs.
 	 */
 	private void updateTableVersion(Connection conn, String name, int version) throws SQLException {
 		StringBuilder sql = new StringBuilder();
@@ -168,7 +177,8 @@ public class H2Helper {
 	/**
 	 * Creates or upgrades table version table if necessary.
 	 * Always call this before any other DB calls.
-	 * @throws SQLException
+	 * 
+	 * @throws SQLException If database error occurs.
 	 */
 	private void initVersionTable() throws SQLException {
 		initTable(VERSION_TABLE_NAME, VERSION_TABLE_VERSION, (conn, current) -> {
@@ -189,10 +199,11 @@ public class H2Helper {
 	/**
 	 * Checks the version of the given table against the given version, and calls the upgrade callback if necessary.
 	 * After successful completion of the upgrade callback, updates table to the given version.
+	 * 
 	 * @param name Name of table to check.
 	 * @param version Desired table version.
 	 * @param upgrade Callback to use if the current version is less than desired version.
-	 * @throws SQLException
+	 * @throws SQLException If database error occurs.
 	 */
 	public void initTable(String name, int version, UpgradeCallback upgrade) throws SQLException {
 		Integer current = getTableVersion(name);
@@ -233,11 +244,13 @@ public class H2Helper {
 	
 	/**
 	 * Perform database query, doing Connection, PreparedStatement and ResultSet setup and cleanup.
+	 * 
+	 * @param <T> Type of data object to return.
 	 * @param sql Query SQL.
 	 * @param pc Callback for preparing query.  Can be null.
 	 * @param rc Callback for processing result set.
 	 * @return Return value from rc.
-	 * @throws SQLException
+	 * @throws SQLException If database error occurs.
 	 */
 	public <T> T doQuery(String sql, PrepareCallback pc, ResultCallback<T> rc) throws SQLException {
 		Connection conn = null;
@@ -253,12 +266,14 @@ public class H2Helper {
 	
 	/**
 	 * Perform database query, doing PreparedStatement and ResultSet setup and cleanup.
+	 * 
+	 * @param <T> Type of data object to return.
 	 * @param conn Database connection to use.
 	 * @param sql Query SQL.
 	 * @param pc Callback for preparing query.  Can be null.
 	 * @param rc Callback for processing result set.
 	 * @return Return value from rc.
-	 * @throws SQLException
+	 * @throws SQLException If database error occurs.
 	 */
 	public <T> T doQuery(Connection conn, String sql, PrepareCallback pc, ResultCallback<T> rc) throws SQLException {
 		PreparedStatement ps = null;
@@ -283,10 +298,11 @@ public class H2Helper {
 	
 	/**
 	 * Perform database update, doing Connection and PreparedStatement setup and cleanup.
+	 * 
 	 * @param sql Update SQL.
 	 * @param pc Callback for preparing update.  Can be null.
 	 * @return Row count.
-	 * @throws SQLException
+	 * @throws SQLException If database error occurs.
 	 */
 	public int doUpdate(String sql, PrepareCallback pc) throws SQLException {
 		Connection conn = null;
@@ -302,11 +318,12 @@ public class H2Helper {
 	
 	/**
 	 * Perform database update, doing PreparedStatement setup and cleanup.
+	 * 
 	 * @param conn Database connection to use.
 	 * @param sql Update SQL.
 	 * @param pc Callback for preparing update.  Can be null.
 	 * @return Row count.
-	 * @throws SQLException
+	 * @throws SQLException If database error occurs.
 	 */
 	public int doUpdate(Connection conn, String sql, PrepareCallback pc) throws SQLException {
 		PreparedStatement ps = null;
@@ -326,10 +343,11 @@ public class H2Helper {
 	
 	/**
 	 * Perform database batch update transaction, doing Connection and PreparedStatement setup and cleanup.
+	 * 
 	 * @param sql Batch update SQL.
 	 * @param pc Callback for preparing batch update.  Can be null.
 	 * @return Array of row counts.
-	 * @throws SQLException
+	 * @throws SQLException If database error occurs.
 	 */
 	public int[] doBatchUpdate(String sql, PrepareCallback pc) throws SQLException {
 		Connection conn = null;
@@ -345,11 +363,12 @@ public class H2Helper {
 	
 	/**
 	 * Perform database batch update transaction, doing PreparedStatement setup and cleanup.
+	 * 
 	 * @param conn Database connection to use.
 	 * @param sql Batch update SQL.
 	 * @param pc Callback for preparing batch update.  Can be null.
 	 * @return Array of row counts.
-	 * @throws SQLException
+	 * @throws SQLException If database error occurs.
 	 */
 	public int[] doBatchUpdate(Connection conn, String sql, PrepareCallback pc) throws SQLException {
 		PreparedStatement ps = null;
