@@ -8,6 +8,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Map;
 
 /**
  * Copyright © 2017  David Walton
@@ -41,9 +42,13 @@ public class H2Helper {
 	 * Version of the table version table.
 	 */
 	private static final int VERSION_TABLE_VERSION = 1;
+	
+	private static final String DEFAULT_USER = "sa";
+	private static final String DEFAULT_PASSWORD = "";
+	
 	private final String connUrl;
-	private String user;
-	private String password;
+	private String user = DEFAULT_USER;
+	private String password = DEFAULT_PASSWORD;
 	
 	/**
 	 * Callback used for creating and upgrading database tables.
@@ -100,86 +105,44 @@ public class H2Helper {
 	 * @throws SQLException If database error occurs.
 	 */
 	public H2Helper(Path datafile) throws IOException, ClassNotFoundException, SQLException {
-		this(datafile, false);
+		this(datafile, null, null, null);
 	}
 
 	/**
-	 * Create instance of H2DB using given database, and initialize table version table.
+	 * Create instance of H2DB using given database and options, and initialize table version table.
 	 * 
 	 * @param datafile Path to database.
-	 * @param autoServer If true, use AUTO_SERVER=TRUE.
+	 * @param options Map of options to be added to connection URL as ";KEY=VALUE";
 	 * @throws IOException If error creating database directory.
 	 * @throws ClassNotFoundException If error loading database driver.
 	 * @throws SQLException If database error occurs.
 	 */
-	public H2Helper(Path datafile, boolean autoServer) throws IOException, ClassNotFoundException, SQLException {
-		Class.forName("org.h2.Driver");
-		Files.createDirectories(datafile.getParent());
-		String connUrl = "jdbc:h2:" + datafile.toString();
-		if (autoServer) {
-			connUrl += ";AUTO_SERVER=TRUE";
-		}
-		this.connUrl = connUrl;
-		
-		initVersionTable();
+	public H2Helper(Path datafile, Map<String, String> options) throws IOException, ClassNotFoundException, SQLException {
+		this(datafile, options, null, null);
 	}
 
 	/**
-	 * Create instance of H2DB using given database and login credentials, and initialize table version table.
+	 * Create instance of H2DB using given database, options and login credentials, and initialize table version table.
 	 * 
 	 * @param datafile Path to database.
-	 * @param autoServer If true, use AUTO_SERVER=TRUE.
+	 * @param options Map of options to be added to connection URL as ";KEY=VALUE";
 	 * @param user Username to use for connections.
 	 * @param password Password to use for connections.
 	 * @throws IOException If error creating database directory.
 	 * @throws ClassNotFoundException If error loading database driver.
 	 * @throws SQLException If database error occurs.
 	 */
-	public H2Helper(Path datafile, boolean autoServer, String user, String password) throws IOException, ClassNotFoundException, SQLException {
+	public H2Helper(Path datafile, Map<String, String> options, String user, String password) throws IOException, ClassNotFoundException, SQLException {
 		Class.forName("org.h2.Driver");
 		Files.createDirectories(datafile.getParent());
-		String connUrl = "jdbc:h2:" + datafile.toString();
-		if (autoServer) {
-			connUrl += ";AUTO_SERVER=TRUE";
+		StringBuilder sb = new StringBuilder();
+		sb.append("jdbc:h2:").append(datafile.toString());
+		if (options != null) {
+			for (String key : options.keySet()) {
+				sb.append(";").append(key).append("=").append(options.get(key));
+			}
 		}
-		this.connUrl = connUrl;
-		setCredentials(user, password);
-		
-		initVersionTable();
-	}
-
-	/**
-	 * Create instance of H2DB using given database, and initialize table version table.
-	 * 
-	 * @param datafile Path to database.
-	 * @param autoServerPort Use AUTO_SERVER mode with this port.
-	 * @throws IOException If error creating database directory.
-	 * @throws ClassNotFoundException If error loading database driver.
-	 * @throws SQLException If database error occurs.
-	 */
-	public H2Helper(Path datafile, int autoServerPort) throws IOException, ClassNotFoundException, SQLException {
-		Class.forName("org.h2.Driver");
-		Files.createDirectories(datafile.getParent());
-		connUrl = "jdbc:h2:" + datafile.toString() + ";AUTO_SERVER=TRUE;AUTO_SERVER_PORT=" + autoServerPort;
-		
-		initVersionTable();
-	}
-
-	/**
-	 * Create instance of H2DB using given database and login credentials, and initialize table version table.
-	 * 
-	 * @param datafile Path to database.
-	 * @param autoServerPort Use AUTO_SERVER mode with this port.
-	 * @param user Username to use for connections.
-	 * @param password Password to use for connections.
-	 * @throws IOException If error creating database directory.
-	 * @throws ClassNotFoundException If error loading database driver.
-	 * @throws SQLException If database error occurs.
-	 */
-	public H2Helper(Path datafile, int autoServerPort, String user, String password) throws IOException, ClassNotFoundException, SQLException {
-		Class.forName("org.h2.Driver");
-		Files.createDirectories(datafile.getParent());
-		connUrl = "jdbc:h2:" + datafile.toString() + ";AUTO_SERVER=TRUE;AUTO_SERVER_PORT=" + autoServerPort;
+		connUrl = sb.toString();
 		setCredentials(user, password);
 		
 		initVersionTable();
@@ -188,15 +151,21 @@ public class H2Helper {
 	/**
 	 * Sets login credentials to be used by connect() and other methods which do not have a Connection argument.
 	 * <p>
-	 * If these have not been set, the H2 default ("sa"/"") is used.  For any usage where security matters that
-	 * should have been changed, and you will need to provide credentials here.
+	 * If these have not been set, or user is set to null here, the H2 default ("sa"/"") is used.
+	 * For any usage where security matters that should have been changed,
+	 * and you will need to provide credentials here.
 	 * 
 	 * @param user Username to use for connections.
 	 * @param password Password to use for connections.
 	 */
 	public void setCredentials(String user, String password) {
-		this.user = user;
-		this.password = password;
+		if (user == null) {
+			this.user = DEFAULT_USER;
+			this.password = DEFAULT_PASSWORD;
+		} else {
+			this.user = user;
+			this.password = password;
+		}
 	}
 	
 	/**
@@ -210,16 +179,12 @@ public class H2Helper {
 	/**
 	 * Opens and returns a connection to the database.
 	 * <p>
-	 * Uses credentials set by setCredentials().  
-	 * If those haven't been set, attempts to use the H2 default values.
+	 * Uses credentials set by setCredentials(), or the H2 defaults.
 	 * 
 	 * @return Database connection.
 	 * @throws SQLException If database error occurs.
 	 */
 	public Connection connect() throws SQLException {
-		if ((user == null) || (password == null)) {
-			return connect("sa", "");
-		}
 		return connect(user, password);
 	}
 
