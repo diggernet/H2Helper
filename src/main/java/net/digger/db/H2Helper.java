@@ -8,6 +8,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Map;
 
 /**
  * Copyright © 2017  David Walton
@@ -41,7 +42,13 @@ public class H2Helper {
 	 * Version of the table version table.
 	 */
 	private static final int VERSION_TABLE_VERSION = 1;
+	
+	private static final String DEFAULT_USER = "sa";
+	private static final String DEFAULT_PASSWORD = "";
+	
 	private final String connUrl;
+	private String user = DEFAULT_USER;
+	private String password = DEFAULT_PASSWORD;
 	
 	/**
 	 * Callback used for creating and upgrading database tables.
@@ -67,6 +74,29 @@ public class H2Helper {
 	}
 
 	/**
+	 * Callback used for processing update generated keys ResultSet.
+	 * 
+	 * @param <T> Type of data object to return.
+	 */
+	public interface GeneratedKeysCallback<T> {
+		public T process(int rowCount, ResultSet rs) throws SQLException;
+	}
+
+	/**
+	 * Create instance of H2DB using given connection URL, and initialize table version table.
+	 * 
+	 * @param connUrl H2 JDBC connection URL.
+	 * @throws ClassNotFoundException If error loading database driver.
+	 * @throws SQLException If database error occurs.
+	 */
+	public H2Helper(String connUrl) throws ClassNotFoundException, SQLException {
+		Class.forName("org.h2.Driver");
+		this.connUrl = connUrl;
+		
+		initVersionTable();
+	}
+
+	/**
 	 * Create instance of H2DB using given database, and initialize table version table.
 	 * 
 	 * @param datafile Path to database.
@@ -75,21 +105,87 @@ public class H2Helper {
 	 * @throws SQLException If database error occurs.
 	 */
 	public H2Helper(Path datafile) throws IOException, ClassNotFoundException, SQLException {
+		this(datafile, null, null, null);
+	}
+
+	/**
+	 * Create instance of H2DB using given database and options, and initialize table version table.
+	 * 
+	 * @param datafile Path to database.
+	 * @param options Map of options to be added to connection URL as ";KEY=VALUE";
+	 * @throws IOException If error creating database directory.
+	 * @throws ClassNotFoundException If error loading database driver.
+	 * @throws SQLException If database error occurs.
+	 */
+	public H2Helper(Path datafile, Map<String, String> options) throws IOException, ClassNotFoundException, SQLException {
+		this(datafile, options, null, null);
+	}
+
+	/**
+	 * Create instance of H2DB using given database, options and login credentials, and initialize table version table.
+	 * 
+	 * @param datafile Path to database.
+	 * @param options Map of options to be added to connection URL as ";KEY=VALUE";
+	 * @param user Username to use for connections.
+	 * @param password Password to use for connections.
+	 * @throws IOException If error creating database directory.
+	 * @throws ClassNotFoundException If error loading database driver.
+	 * @throws SQLException If database error occurs.
+	 */
+	public H2Helper(Path datafile, Map<String, String> options, String user, String password) throws IOException, ClassNotFoundException, SQLException {
 		Class.forName("org.h2.Driver");
 		Files.createDirectories(datafile.getParent());
-		connUrl = "jdbc:h2:" + datafile.toString();
+		StringBuilder sb = new StringBuilder();
+		sb.append("jdbc:h2:").append(datafile.toString());
+		if (options != null) {
+			for (String key : options.keySet()) {
+				sb.append(";").append(key).append("=").append(options.get(key));
+			}
+		}
+		connUrl = sb.toString();
+		setCredentials(user, password);
 		
 		initVersionTable();
 	}
 
 	/**
-	 * Opens and returns a connection to the database as user "sa".
+	 * Sets login credentials to be used by connect() and other methods which do not have a Connection argument.
+	 * <p>
+	 * If these have not been set, or user is set to null here, the H2 default ("sa"/"") is used.
+	 * For any usage where security matters that should have been changed,
+	 * and you will need to provide credentials here.
+	 * 
+	 * @param user Username to use for connections.
+	 * @param password Password to use for connections.
+	 */
+	public void setCredentials(String user, String password) {
+		if (user == null) {
+			this.user = DEFAULT_USER;
+			this.password = DEFAULT_PASSWORD;
+		} else {
+			this.user = user;
+			this.password = password;
+		}
+	}
+	
+	/**
+	 * Returns the connection url used to connect to the database.
+	 * @return Connection URL
+	 */
+	public String getConnUrl() {
+		return connUrl;
+	}
+	
+	/**
+	 * Opens and returns a connection to the database.
+	 * <p>
+	 * Uses credentials set by setCredentials(), or the H2 defaults.
 	 * 
 	 * @return Database connection.
 	 * @throws SQLException If database error occurs.
 	 */
 	public Connection connect() throws SQLException {
-		return connect("sa", "");
+		return connect(user, password);
 	}
 
 	/**
@@ -266,6 +362,8 @@ public class H2Helper {
 	
 	/**
 	 * Perform database query, doing PreparedStatement and ResultSet setup and cleanup.
+	 * <p>
+	 * Synchronizes on conn, to avoid concurrency problems if the caller is using multiple threads.
 	 * 
 	 * @param <T> Type of data object to return.
 	 * @param conn Database connection to use.
@@ -279,13 +377,15 @@ public class H2Helper {
 		PreparedStatement ps = null;
 		ResultSet rs = null;
 		try {
-			conn.setAutoCommit(true);
-			ps = conn.prepareStatement(sql);
-			if (pc != null) {
-				pc.prepare(ps);
+			synchronized (conn) {
+				conn.setAutoCommit(true);
+				ps = conn.prepareStatement(sql);
+				if (pc != null) {
+					pc.prepare(ps);
+				}
+				rs = ps.executeQuery();
+				return rc.process(rs);
 			}
-			rs = ps.executeQuery();
-			return rc.process(rs);
 		} finally {
 			if (rs != null) {
 				rs.close();
@@ -318,6 +418,8 @@ public class H2Helper {
 	
 	/**
 	 * Perform database update, doing PreparedStatement setup and cleanup.
+	 * <p>
+	 * Synchronizes on conn, to avoid concurrency problems if the caller is using multiple threads.
 	 * 
 	 * @param conn Database connection to use.
 	 * @param sql Update SQL.
@@ -328,13 +430,74 @@ public class H2Helper {
 	public int doUpdate(Connection conn, String sql, PrepareCallback pc) throws SQLException {
 		PreparedStatement ps = null;
 		try {
-			conn.setAutoCommit(true);
-			ps = conn.prepareStatement(sql);
-			if (pc != null) {
-				pc.prepare(ps);
+			synchronized (conn) {
+				conn.setAutoCommit(true);
+				ps = conn.prepareStatement(sql);
+				if (pc != null) {
+					pc.prepare(ps);
+				}
+				return ps.executeUpdate();
 			}
-			return ps.executeUpdate();
 		} finally {
+			if (ps != null) {
+				ps.close();
+			}
+		}
+	}
+	
+	/**
+	 * Perform database update, doing Connection, PreparedStatement and ResultSet setup and cleanup.
+	 * 
+	 * @param <T> Type of data object to return.
+	 * @param sql Update SQL.
+	 * @param pc Callback for preparing update.  Can be null.
+	 * @param gkc Callback for processing generated keys result set.
+	 * @return Return value from gkc.
+	 * @throws SQLException If database error occurs.
+	 */
+	public <T> T doUpdate(String sql, PrepareCallback pc, GeneratedKeysCallback<T> gkc) throws SQLException {
+		Connection conn = null;
+		try {
+			conn = connect();
+			return doUpdate(conn, sql, pc, gkc);
+		} finally {
+			if (conn != null) {
+				conn.close();
+			}
+		}
+	}
+	
+	/**
+	 * Perform database update, doing PreparedStatement and ResultSet setup and cleanup.
+	 * <p>
+	 * Synchronizes on conn, to avoid concurrency problems if the caller is using multiple threads.
+	 * 
+	 * @param <T> Type of data object to return.
+	 * @param conn Database connection to use.
+	 * @param sql Update SQL.
+	 * @param pc Callback for preparing update.  Can be null.
+	 * @param gkc Callback for processing generated keys result set.
+	 * @return Return value from gkc.
+	 * @throws SQLException If database error occurs.
+	 */
+	public <T> T doUpdate(Connection conn, String sql, PrepareCallback pc, GeneratedKeysCallback<T> gkc) throws SQLException {
+		PreparedStatement ps = null;
+		ResultSet rs = null;
+		try {
+			synchronized (conn) {
+				conn.setAutoCommit(true);
+				ps = conn.prepareStatement(sql);
+				if (pc != null) {
+					pc.prepare(ps);
+				}
+				int count = ps.executeUpdate();
+				rs = ps.getGeneratedKeys();
+				return gkc.process(count, rs);
+			}
+		} finally {
+			if (rs != null) {
+				rs.close();
+			}
 			if (ps != null) {
 				ps.close();
 			}
@@ -363,6 +526,8 @@ public class H2Helper {
 	
 	/**
 	 * Perform database batch update transaction, doing PreparedStatement setup and cleanup.
+	 * <p>
+	 * Synchronizes on conn, to avoid concurrency problems if the caller is using multiple threads.
 	 * 
 	 * @param conn Database connection to use.
 	 * @param sql Batch update SQL.
@@ -372,23 +537,25 @@ public class H2Helper {
 	 */
 	public int[] doBatchUpdate(Connection conn, String sql, PrepareCallback pc) throws SQLException {
 		PreparedStatement ps = null;
-		try {
-			conn.setAutoCommit(false);
-			ps = conn.prepareStatement(sql);
-			if (pc != null) {
-				pc.prepare(ps);
-			}
-			int[] result = ps.executeBatch();
-			conn.commit();
-			return result;
-		} catch (SQLException e) {
+		synchronized (conn) {
 			try {
-				conn.rollback();
-			} catch (SQLException e1) {}
-			throw e;
-		} finally {
-			if (ps != null) {
-				ps.close();
+				conn.setAutoCommit(false);
+				ps = conn.prepareStatement(sql);
+				if (pc != null) {
+					pc.prepare(ps);
+				}
+				int[] result = ps.executeBatch();
+				conn.commit();
+				return result;
+			} catch (SQLException e) {
+				try {
+					conn.rollback();
+				} catch (SQLException e1) {}
+				throw e;
+			} finally {
+				if (ps != null) {
+					ps.close();
+				}
 			}
 		}
 	}
