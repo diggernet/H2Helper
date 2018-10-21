@@ -8,6 +8,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Map;
 
 /**
@@ -483,23 +484,30 @@ public class H2Helper {
 	public <T> T doUpdate(Connection conn, String sql, PrepareCallback pc, GeneratedKeysCallback<T> gkc) throws SQLException {
 		PreparedStatement ps = null;
 		ResultSet rs = null;
-		try {
-			synchronized (conn) {
-				conn.setAutoCommit(true);
-				ps = conn.prepareStatement(sql);
+		synchronized (conn) {
+			try {
+				conn.setAutoCommit(false);
+				ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
 				if (pc != null) {
 					pc.prepare(ps);
 				}
 				int count = ps.executeUpdate();
 				rs = ps.getGeneratedKeys();
-				return gkc.process(count, rs);
-			}
-		} finally {
-			if (rs != null) {
-				rs.close();
-			}
-			if (ps != null) {
-				ps.close();
+				T result = gkc.process(count, rs);
+				conn.commit();
+				return result;
+			} catch (SQLException e) {
+				try {
+					conn.rollback();
+				} catch (SQLException e1) {}
+				throw e;
+			} finally {
+				if (rs != null) {
+					rs.close();
+				}
+				if (ps != null) {
+					ps.close();
+				}
 			}
 		}
 	}
