@@ -4,7 +4,7 @@
 
 	<groupId>net.digger</groupId>
 	<artifactId>h2-helper</artifactId>
-	<version>1.1.1-SNAPSHOT</version>
+	<version>1.1.1</version>
 
 	<name>${project.groupId}:${project.artifactId}</name>
 	<description>Utility class for H2 database, which provides table versioning, and methods to simplify database calls.</description>
