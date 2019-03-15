@@ -82,6 +82,15 @@ public class H2Helper {
 	public interface GeneratedKeysCallback<T> {
 		public T process(int rowCount, ResultSet rs) throws SQLException;
 	}
+	
+	/**
+	 * Callback used for performing transactions.
+	 * 
+	 * @param <T> Type of data object to return.
+	 */
+	public interface TransactionCallback<T> {
+		public T process(Connection conn) throws SQLException;
+	}
 
 	/**
 	 * Create instance of H2DB using given connection URL, and initialize table version table.
@@ -212,6 +221,7 @@ public class H2Helper {
 		Connection conn = null;
 		ResultSet result = null;
 		try {
+//System.out.printf("H2Helper.getTableVersion(%s)\n", name);
 			conn = connect();
 			result = conn.getMetaData().getTables(conn.getCatalog(), null, VERSION_TABLE_NAME.toUpperCase(), null);
 			if (!result.next()) {
@@ -316,27 +326,11 @@ public class H2Helper {
 			}
 		}
 		// current table needs updating
-		Connection conn = null;
-		try {
-			conn = connect();
-			conn.setAutoCommit(false);
-
+		doTransaction((conn) -> {
 			upgrade.upgrade(conn, current);
-
 			updateTableVersion(conn, name, version);
-			conn.commit();
-		} catch (SQLException e) {
-			e.printStackTrace();
-			try {
-				conn.rollback();
-			} catch (SQLException e1) {
-				e1.printStackTrace();
-			}
-		} finally {
-			if (conn != null) {
-				conn.close();
-			}
-		}
+			return null;
+		});
 	}
 	
 	/**
@@ -352,6 +346,7 @@ public class H2Helper {
 	public <T> T doQuery(String sql, PrepareCallback pc, ResultCallback<T> rc) throws SQLException {
 		Connection conn = null;
 		try {
+//System.out.printf("H2Helper.doQuery(%s)\n", sql);
 			conn = connect();
 			return doQuery(conn, sql, pc, rc);
 		} finally {
@@ -408,6 +403,7 @@ public class H2Helper {
 	public int doUpdate(String sql, PrepareCallback pc) throws SQLException {
 		Connection conn = null;
 		try {
+//System.out.printf("H2Helper.doUpdate(%s)\n", sql);
 			conn = connect();
 			return doUpdate(conn, sql, pc);
 		} finally {
@@ -459,6 +455,7 @@ public class H2Helper {
 	public <T> T doUpdate(String sql, PrepareCallback pc, GeneratedKeysCallback<T> gkc) throws SQLException {
 		Connection conn = null;
 		try {
+//System.out.printf("H2Helper.doUpdate(%s)\n", sql);
 			conn = connect();
 			return doUpdate(conn, sql, pc, gkc);
 		} finally {
@@ -482,33 +479,27 @@ public class H2Helper {
 	 * @throws SQLException If database error occurs.
 	 */
 	public <T> T doUpdate(Connection conn, String sql, PrepareCallback pc, GeneratedKeysCallback<T> gkc) throws SQLException {
-		PreparedStatement ps = null;
-		ResultSet rs = null;
 		synchronized (conn) {
-			try {
-				conn.setAutoCommit(false);
-				ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
-				if (pc != null) {
-					pc.prepare(ps);
-				}
-				int count = ps.executeUpdate();
-				rs = ps.getGeneratedKeys();
-				T result = gkc.process(count, rs);
-				conn.commit();
-				return result;
-			} catch (SQLException e) {
+			return doTransaction(conn, (conn2) -> {
+				PreparedStatement ps = null;
+				ResultSet rs = null;
 				try {
-					conn.rollback();
-				} catch (SQLException e1) {}
-				throw e;
-			} finally {
-				if (rs != null) {
-					rs.close();
+					ps = conn2.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
+					if (pc != null) {
+						pc.prepare(ps);
+					}
+					int count = ps.executeUpdate();
+					rs = ps.getGeneratedKeys();
+					return gkc.process(count, rs);
+				} finally {
+					if (rs != null) {
+						rs.close();
+					}
+					if (ps != null) {
+						ps.close();
+					}
 				}
-				if (ps != null) {
-					ps.close();
-				}
-			}
+			});
 		}
 	}
 	
@@ -523,6 +514,7 @@ public class H2Helper {
 	public int[] doBatchUpdate(String sql, PrepareCallback pc) throws SQLException {
 		Connection conn = null;
 		try {
+//System.out.printf("H2Helper.doBatchUpdate(%s)\n", sql);
 			conn = connect();
 			return doBatchUpdate(conn, sql, pc);
 		} finally {
@@ -544,15 +536,60 @@ public class H2Helper {
 	 * @throws SQLException If database error occurs.
 	 */
 	public int[] doBatchUpdate(Connection conn, String sql, PrepareCallback pc) throws SQLException {
-		PreparedStatement ps = null;
 		synchronized (conn) {
+			return doTransaction(conn, (conn2) -> {
+				PreparedStatement ps = null;
+				try {
+					ps = conn2.prepareStatement(sql);
+					if (pc != null) {
+						pc.prepare(ps);
+					}
+					return ps.executeBatch();
+				} finally {
+					if (ps != null) {
+						ps.close();
+					}
+				}
+			});
+		}
+	}
+
+	/**
+	 * Perform a transaction, doing Connection setup and cleanup, and rollback as needed.
+	 * 
+	 * @param <T> Type of data object to return.
+	 * @param tc Callback for processing transaction.
+	 * @throws SQLException If database error occurs.
+	 */
+	public <T> T doTransaction(TransactionCallback<T> tc) throws SQLException {
+		Connection conn = null;
+		try {
+//System.out.printf("H2Helper.doTransaction()\n");
+			conn = connect();
+			return doTransaction(conn, tc);
+		} finally {
+			if (conn != null) {
+				conn.close();
+			}
+		}
+	}
+
+	/**
+	 * Perform a transaction, doing rollback as needed.
+	 * <p>
+	 * Synchronizes on conn, to avoid concurrency problems if the caller is using multiple threads.
+	 * 
+	 * @param <T> Type of data object to return.
+	 * @param conn Database connection to use.
+	 * @param tc Callback for processing transaction.
+	 * @throws SQLException If database error occurs.
+	 */
+	public <T> T doTransaction(Connection conn, TransactionCallback<T> tc) throws SQLException {
+		synchronized (conn) {
+			boolean auto = conn.getAutoCommit();
 			try {
 				conn.setAutoCommit(false);
-				ps = conn.prepareStatement(sql);
-				if (pc != null) {
-					pc.prepare(ps);
-				}
-				int[] result = ps.executeBatch();
+				T result = tc.process(conn);
 				conn.commit();
 				return result;
 			} catch (SQLException e) {
@@ -561,9 +598,7 @@ public class H2Helper {
 				} catch (SQLException e1) {}
 				throw e;
 			} finally {
-				if (ps != null) {
-					ps.close();
-				}
+				conn.setAutoCommit(auto);
 			}
 		}
 	}
