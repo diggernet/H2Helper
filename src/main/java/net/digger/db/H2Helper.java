@@ -9,7 +9,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Copyright © 2017  David Walton
@@ -50,6 +52,7 @@ public class H2Helper {
 	private final String connUrl;
 	private String user = DEFAULT_USER;
 	private String password = DEFAULT_PASSWORD;
+	private Set<Connection> transactions = new HashSet<>();
 	
 	/**
 	 * Callback used for creating and upgrading database tables.
@@ -207,7 +210,9 @@ public class H2Helper {
 	 * @throws SQLException If database error occurs.
 	 */
 	public Connection connect(String user, String password) throws SQLException {
-		return DriverManager.getConnection(connUrl, user, password);
+		Connection conn = DriverManager.getConnection(connUrl, user, password);
+		conn.setAutoCommit(true);
+		return conn;
 	}
 
 	/**
@@ -374,7 +379,6 @@ public class H2Helper {
 		ResultSet rs = null;
 		try {
 			synchronized (conn) {
-				conn.setAutoCommit(true);
 				ps = conn.prepareStatement(sql);
 				if (pc != null) {
 					pc.prepare(ps);
@@ -428,7 +432,6 @@ public class H2Helper {
 		PreparedStatement ps = null;
 		try {
 			synchronized (conn) {
-				conn.setAutoCommit(true);
 				ps = conn.prepareStatement(sql);
 				if (pc != null) {
 					pc.prepare(ps);
@@ -443,7 +446,7 @@ public class H2Helper {
 	}
 	
 	/**
-	 * Perform database update, doing Connection, PreparedStatement and ResultSet setup and cleanup.
+	 * Perform database update transaction, returning generated keys, doing Connection, PreparedStatement and ResultSet setup and cleanup.
 	 * 
 	 * @param <T> Type of data object to return.
 	 * @param sql Update SQL.
@@ -466,7 +469,7 @@ public class H2Helper {
 	}
 	
 	/**
-	 * Perform database update, doing PreparedStatement and ResultSet setup and cleanup.
+	 * Perform database update transaction, returning generated keys, doing PreparedStatement and ResultSet setup and cleanup.
 	 * <p>
 	 * Synchronizes on conn, to avoid concurrency problems if the caller is using multiple threads.
 	 * 
@@ -555,7 +558,7 @@ public class H2Helper {
 	}
 
 	/**
-	 * Perform a transaction, doing Connection setup and cleanup, and rollback as needed.
+	 * Perform a transaction, doing Connection setup and cleanup, and rollback if SQLException thrown.
 	 * 
 	 * @param <T> Type of data object to return.
 	 * @param tc Callback for processing transaction.
@@ -575,7 +578,7 @@ public class H2Helper {
 	}
 
 	/**
-	 * Perform a transaction, doing rollback as needed.
+	 * Perform a transaction, doing rollback if SQLException thrown.
 	 * <p>
 	 * Synchronizes on conn, to avoid concurrency problems if the caller is using multiple threads.
 	 * 
@@ -586,8 +589,14 @@ public class H2Helper {
 	 */
 	public <T> T doTransaction(Connection conn, TransactionCallback<T> tc) throws SQLException {
 		synchronized (conn) {
+			if (transactions.contains(conn)) {
+				// this is a nested doTransaction() call, let the outer one handle errors
+				return tc.process(conn);
+			}
+			// only do transaction management if this connection NOT already in a transaction
 			boolean auto = conn.getAutoCommit();
 			try {
+				transactions.add(conn);
 				conn.setAutoCommit(false);
 				T result = tc.process(conn);
 				conn.commit();
@@ -598,6 +607,7 @@ public class H2Helper {
 				} catch (SQLException e1) {}
 				throw e;
 			} finally {
+				transactions.remove(conn);
 				conn.setAutoCommit(auto);
 			}
 		}

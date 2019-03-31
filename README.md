@@ -7,7 +7,7 @@ Intended primarily to simplify using H2 as an application's embedded data store 
 		<dependency>
 			<groupId>net.digger</groupId>
 			<artifactId>h2-helper</artifactId>
-			<version>1.1.0</version>
+			<version>1.2.0</version>
 		</dependency>
 
 ## Usage
