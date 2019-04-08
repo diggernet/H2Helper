@@ -601,11 +601,12 @@ public class H2Helper {
 				T result = tc.process(conn);
 				conn.commit();
 				return result;
-			} catch (SQLException e) {
+			} catch (Throwable t) {
+				// we want to rollback if ANY error occurs, not just SQLException
 				try {
 					conn.rollback();
-				} catch (SQLException e1) {}
-				throw e;
+				} catch (SQLException e) {}
+				throw t;
 			} finally {
 				transactions.remove(conn);
 				conn.setAutoCommit(auto);
