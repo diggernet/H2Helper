@@ -7,7 +7,7 @@ Intended primarily to simplify using H2 as an application's embedded data store 
 		<dependency>
 			<groupId>net.digger</groupId>
 			<artifactId>h2-helper</artifactId>
-			<version>1.1.0</version>
+			<version>1.2.0</version>
 		</dependency>
 
 ## Usage
@@ -65,14 +65,15 @@ table if it is a new database, or upgrade the table if its schema has changed:
 			// If an exception is thrown, all changes are rolled back.
 		});
 
-Once the table has been initialized, it is ready for use.
+After the table has been initialized, it is ready for use.
 
 You can call setCredentials() to access a database with a username/password other than the admin account used to
 initialize the database and table(s).  And connect() will set up and return a connection to the database.
 
-H2Helper provides a number of methods, including doQuery(), doUpdate() and doBatchUpdate(), which handle a lot of
-the boilerplate necessary for database calls, in order to simplify your code.  They have variations which will
-accept an existing database connection, and variations which create and close their own connection automatically.
+H2Helper provides a number of methods, including doQuery(), doUpdate(), doBatchUpdate(), and doTransaction(),
+which handle a lot of the boilerplate necessary for database calls, in order to simplify your code.  They have
+variations which will accept an existing database connection, and variations which create and close their own
+connection automatically.
 
 The doQuery() methods accept a SQL string to execute, an optional PrepareCallback implementation which is called
 with a PreparedStatement to assign values to parameters before the call is made, and a ResultCallback implementation
@@ -84,9 +85,12 @@ of modified rows.  There is also a variation of doUpdate() which accepts a Gener
 In that case, the GeneratedKeysCallback is called with the number of modified rows, and a ResultSet containing
 data about any auto-generated keys which were created by this query.
 
-Finally, the doBatchUpdate() methods are similar to doUpdate(), except they expect the PrepareCallback to create
+The doBatchUpdate() methods are similar to doUpdate(), except they expect the PrepareCallback to create
 one or more sets of parameters (using PreparedStatement.addBatch() for each one).  They return an array of
 modified row counts, one for each set of parameters in the batch.
+
+Finally, the doTransaction() methods accept a TransactionCallback, which is called in the context of a transaction.
+Transaction setup and commit are handled automatically, as well as rollback if an error occurs.
 
 ## Dependencies
 * [H2 Database](http://www.h2database.com)
